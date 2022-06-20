@@ -339,25 +339,32 @@ func (rp *reverseProxy) serveFromCache(s *scope, srw *statResponseWriter, req *h
 		contentLength := bufferedRespWriter.GetCapturedContentLength()
 		reader := bufferedRespWriter.Reader()
 
-		// we create this buffer to be able to stream data both to cache as well as to an end user
-		var buf bytes.Buffer
-		tee := io.TeeReader(reader, &buf)
-		contentMetadata := cache.ContentMetadata{Length: contentLength, Encoding: contentEncoding, Type: contentType}
-		expiration, err := userCache.Put(tee, contentMetadata, key)
-		if err != nil {
-			log.Errorf("%s: %s; query: %q - failed to put response in the cache", s, err, q)
-		}
+		if isToCache(contentLength, s) {
+			// we create this buffer to be able to stream data both to cache as well as to an end user
+			var buf bytes.Buffer
+			tee := io.TeeReader(reader, &buf)
+			contentMetadata := cache.ContentMetadata{Length: contentLength, Encoding: contentEncoding, Type: contentType}
+			expiration, err := userCache.Put(tee, contentMetadata, key)
+			if err != nil {
+				log.Errorf("%s: %s; query: %q - failed to put response in the cache", s, err, q)
+			}
 
-		// mark transaction as completed
-		if err = userCache.Complete(key); err != nil {
-			log.Errorf("%s: %s; query: %q", s, err, q)
-		}
+			// mark transaction as completed
+			if err = userCache.Complete(key); err != nil {
+				log.Errorf("%s: %s; query: %q", s, err, q)
+			}
 
-		err = RespondWithData(srw, &buf, contentMetadata, expiration, bufferedRespWriter.StatusCode())
-		if err != nil {
-			err = fmt.Errorf("%s: %w; query: %q", s, err, q)
-			respondWith(srw, err, http.StatusInternalServerError)
-			return
+			err = RespondWithData(srw, &buf, contentMetadata, expiration, bufferedRespWriter.StatusCode())
+			if err != nil {
+				err = fmt.Errorf("%s: %w; query: %q", s, err, q)
+				respondWith(srw, err, http.StatusInternalServerError)
+				return
+			}
+		} else {
+			err = RespondWithoutData(srw)
+			if err != nil {
+				log.Errorf("%s: %s; query: %q - failed to put response in the cache", s, err, q)
+			}
 		}
 	}
 }
